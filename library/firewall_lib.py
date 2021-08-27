@@ -175,6 +175,7 @@ try:
     HAS_FIREWALLD = True
 except ImportError:
     HAS_FIREWALLD = False
+    FirewallClient = None
 
 
 def parse_port(module, item):
