@@ -23,14 +23,110 @@ class MockException(Exception):
     pass
 
 
+class AddServiceException(Exception):
+    pass
+
+
 class MockFirewallClient(object):
-    def __call__(self):
+    def __init__(self):
         self.connected = False
+
+    def __call__(self):
         return self
+
+    def set_params(self, connected_value):
+        self.connected = connected_value
+
+    def setExceptionHandler(self, error):
+        pass
+
+    def getDefaultZone(self):
+        return "default"
+
+    def config(self):
+        return MockFirewallConfig()
+
+    def queryService(self, zone, item):
+        return False
+
+    def addService(self, zone, item, timeout):
+        raise AddServiceException()
+
+    def addPort(self, zone, port, protocol, timeout):
+        raise MockException("called addPort")
+
+    def queryPort(self, zone, port, protocol):
+        return False
+
+    def querySourcePort(self, zone, port, protocol):
+        return False
+
+    def addSourcePort(self, zone, port, protocol, timeout):
+        raise MockException("called addSourcePort")
+
+    def queryForwardPort(self, zone, port, protocol, to_port, to_addr):
+        return False
+
+    def addForwardPort(self, zone, port, protocol, to_port, to_addr, timeout):
+        raise MockException("called addForwardPort")
+
+    def queryMasquerade(self, zone):
+        return False
+
+    def addMasquerade(self, zone, timeout):
+        raise MockException("called addMasquerade")
+
+    # def queryRichRule(self,zone,item):
+    # return False
+    # def addRichRule(self,zone,item,timout):
+    # return MockException("called addRichRule")
+
+
+class MockFirewallConfig:
+    def getZoneByName(self, zone):
+        return MockFirewallZone()
+
+
+class MockFirewallZone:
+    def getSettings(self):
+        return MockFirewallSettings
+
+
+class MockFirewallSettings:
+    def queryService(item):
+        return True
+
+    def queryPort(port, protocol):
+        return True
+
+    def removeService(item):
+        raise MockException("called removeService")
+
+    def removePort(port, protocol):
+        raise MockException("called removePort")
+
+    def querySourcePort(port, protocol):
+        return True
+
+    def removeSourcePort(port, protocol):
+        raise MockException("called removeSourcePort")
+
+    def queryForwardPort(port, protocol):
+        return True
+
+    def removeForwardPort(port, protocol, to_port, to_addr):
+        raise MockException("called removeForwardPort")
+
+    def queryMasquerade():
+        return True
+
+    def removeMasquerade():
+        raise MockException("called removeMasquerade")
 
 
 class MockAnsibleModule(object):
     def __init__(self, **kwargs):
+        self.check_mode = False
         self.params = {}
         self.call_params = {}
         if not kwargs:
@@ -214,7 +310,7 @@ class FirewallLibMain(unittest.TestCase):
             firewall_lib.main()
         self.assertEqual(am_class.fail_msg, "timeout can not be used with target only")
 
-    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient)
+    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient, create=True)
     @patch("firewall_lib.AnsibleModule", new_callable=MockAnsibleModule)
     @patch("firewall_lib.HAS_FIREWALLD", True)
     def test_firewalld_running(self, am_class, firewall_class):
@@ -226,9 +322,276 @@ class FirewallLibMain(unittest.TestCase):
                 "offline": False,
             }
         )
+        firewall_class.set_params(False)
         with self.assertRaises(MockException):
             firewall_lib.main()
         self.assertEqual(
             am_class.fail_msg,
             "Firewalld is not running and offline operation is declined.",
         )
+
+    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient, create=True)
+    @patch("firewall_lib.AnsibleModule", new_callable=MockAnsibleModule)
+    @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.8", create=True)
+    def test_firewalld_offline_version_disconnected(self, am_class, firewall_class):
+        am_class.set_params(
+            {
+                "icmp_block_inversion": True,
+                "permanent": False,
+                "offline": True,
+            }
+        )
+        firewall_class.set_params(False)
+        with self.assertRaises(MockException):
+            firewall_lib.main()
+        self.assertEqual(
+            am_class.fail_msg,
+            "Unsupported firewalld version 0.3.8, offline operation requires >= 0.3.9",
+        )
+
+    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient, create=True)
+    @patch("firewall_lib.AnsibleModule", new_callable=MockAnsibleModule)
+    @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.2.8", create=True)
+    def test_firewalld_offline_version_connected(self, am_class, firewall_class):
+        am_class.set_params(
+            {
+                "icmp_block_inversion": True,
+                "permanent": False,
+                "offline": True,
+            }
+        )
+        firewall_class.set_params(True)
+        with self.assertRaises(MockException):
+            firewall_lib.main()
+        self.assertEqual(
+            am_class.fail_msg,
+            "Unsupported firewalld version 0.2.8, requires >= 0.2.11",
+        )
+
+    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient, create=True)
+    @patch("firewall_lib.AnsibleModule", new_callable=MockAnsibleModule)
+    @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.11", create=True)
+    def test_firewall_service_enabled_state(self, am_class, firewall_class):
+        am_class.set_params(
+            {
+                "permanent": False,
+                "offline": True,
+                "service": ["default", "internal", "dmz"],
+                "state": "enabled",
+                "runtime": True,
+            }
+        )
+        firewall_class.set_params(True)
+        with self.assertRaises(AddServiceException):
+            firewall_lib.main()
+
+    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient, create=True)
+    @patch("firewall_lib.AnsibleModule", new_callable=MockAnsibleModule)
+    @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.11", create=True)
+    def test_firewall_service_disabled_state(self, am_class, firewall_class):
+        am_class.set_params(
+            {
+                "permanent": True,
+                "offline": True,
+                "service": ["default", "internal", "dmz"],
+                "state": "disabled",
+                "runtime": False,
+            }
+        )
+        firewall_class.set_params(True)
+        with self.assertRaises(MockException) as e:
+            firewall_lib.main()
+            self.assertEqual(str(e), "called removeService")
+
+    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient, create=True)
+    @patch("firewall_lib.AnsibleModule", new_callable=MockAnsibleModule)
+    @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.11", create=True)
+    def test_firewall_port_enabled_state(self, am_class, firewall_class):
+        am_class.set_params(
+            {
+                "permanent": False,
+                "offline": True,
+                "port": ["8081/tcp", "161-162/udp"],
+                "state": "enabled",
+                "runtime": True,
+            }
+        )
+        firewall_class.set_params(True)
+        with self.assertRaises(MockException) as e:
+            firewall_lib.main()
+            self.assertEqual(str(e), "called addPort")
+
+    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient, create=True)
+    @patch("firewall_lib.AnsibleModule", new_callable=MockAnsibleModule)
+    @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.11", create=True)
+    def test_firewall_port_disabled_state(self, am_class, firewall_class):
+        am_class.set_params(
+            {
+                "permanent": True,
+                "offline": True,
+                "port": ["8081/tcp", "161-162/udp"],
+                "state": "disabled",
+                "runtime": False,
+            }
+        )
+        firewall_class.set_params(True)
+        with self.assertRaises(MockException) as e:
+            firewall_lib.main()
+            self.assertEqual(str(e), "called removePort")
+
+    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient, create=True)
+    @patch("firewall_lib.AnsibleModule", new_callable=MockAnsibleModule)
+    @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.11", create=True)
+    def test_firewall_source_port_enabled_state(self, am_class, firewall_class):
+        am_class.set_params(
+            {
+                "permanent": False,
+                "offline": True,
+                "source_port": ["8081/tcp", "161-162/udp"],
+                "state": "enabled",
+                "runtime": True,
+            }
+        )
+        firewall_class.set_params(True)
+        with self.assertRaises(MockException) as e:
+            firewall_lib.main()
+            self.assertEqual(str(e), "called addSourcePort")
+
+    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient, create=True)
+    @patch("firewall_lib.AnsibleModule", new_callable=MockAnsibleModule)
+    @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.11", create=True)
+    def test_firewall_source_port_disabled_state(self, am_class, firewall_class):
+        am_class.set_params(
+            {
+                "permanent": True,
+                "offline": True,
+                "source_port": ["8081/tcp", "161-162/udp"],
+                "state": "disabled",
+                "runtime": False,
+            }
+        )
+        firewall_class.set_params(True)
+        with self.assertRaises(MockException) as e:
+            firewall_lib.main()
+            self.assertEqual(str(e), "called removeSourcePort")
+
+    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient, create=True)
+    @patch("firewall_lib.AnsibleModule", new_callable=MockAnsibleModule)
+    @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.11", create=True)
+    def test_firewall_forward_port_enabled_state(self, am_class, firewall_class):
+        am_class.set_params(
+            {
+                "permanent": False,
+                "offline": True,
+                "forward_port": ["8081/tcp", "161-162/udp"],
+                "state": "enabled",
+                "runtime": True,
+            }
+        )
+        firewall_class.set_params(True)
+        with self.assertRaises(MockException) as e:
+            firewall_lib.main()
+            self.assertEqual(str(e), "called addForwardPort")
+
+    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient, create=True)
+    @patch("firewall_lib.AnsibleModule", new_callable=MockAnsibleModule)
+    @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.11", create=True)
+    def test_firewall_forward_port_disabled_state(self, am_class, firewall_class):
+        am_class.set_params(
+            {
+                "permanent": True,
+                "offline": True,
+                "forward_port": ["8081/tcp", "161-162/udp"],
+                "state": "disabled",
+                "runtime": False,
+            }
+        )
+        firewall_class.set_params(True)
+        with self.assertRaises(MockException) as e:
+            firewall_lib.main()
+            self.assertEqual(str(e), "called removeForwardPort")
+
+    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient, create=True)
+    @patch("firewall_lib.AnsibleModule", new_callable=MockAnsibleModule)
+    @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.11", create=True)
+    def test_firewall_masquerade_enabled_state(self, am_class, firewall_class):
+        am_class.set_params(
+            {
+                "permanent": False,
+                "offline": True,
+                "masquerade": True,
+                "state": "enabled",
+                "runtime": True,
+            }
+        )
+        firewall_class.set_params(True)
+        with self.assertRaises(MockException) as e:
+            firewall_lib.main()
+            self.assertEqual(str(e), "called addMasquerade")
+
+    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient, create=True)
+    @patch("firewall_lib.AnsibleModule", new_callable=MockAnsibleModule)
+    @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.11", create=True)
+    def test_firewall_masquerade_disabled_state(self, am_class, firewall_class):
+        am_class.set_params(
+            {
+                "permanent": True,
+                "offline": True,
+                "Masquerade": True,
+                "state": "disabled",
+                "runtime": False,
+            }
+        )
+        firewall_class.set_params(True)
+        with self.assertRaises(MockException) as e:
+            firewall_lib.main()
+
+    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient, create=True)
+    @patch("firewall_lib.AnsibleModule", new_callable=MockAnsibleModule)
+    @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.11", create=True)
+    def test_firewall_rich_rule_enabled_state(self, am_class, firewall_class):
+        am_class.set_params(
+            {
+                "permanent": False,
+                "offline": True,
+                "masquerade": True,
+                "state": "enabled",
+                "runtime": True,
+            }
+        )
+        firewall_class.set_params(True)
+        with self.assertRaises(MockException) as e:
+            firewall_lib.main()
+            self.assertEqual(str(e), "called addMasquerade")
+
+    @patch("firewall_lib.FirewallClient", new_callable=MockFirewallClient, create=True)
+    @patch("firewall_lib.AnsibleModule", new_callable=MockAnsibleModule)
+    @patch("firewall_lib.HAS_FIREWALLD", True)
+    @patch("firewall_lib.FW_VERSION", "0.3.11", create=True)
+    def test_firewall_rich_rule_disabled_state(self, am_class, firewall_class):
+        am_class.set_params(
+            {
+                "permanent": True,
+                "offline": True,
+                "Masquerade": True,
+                "state": "disabled",
+                "runtime": False,
+            }
+        )
+        firewall_class.set_params(True)
+        with self.assertRaises(MockException) as e:
+            firewall_lib.main()
+            self.assertEqual(str(e), "called removeMasquerade")
